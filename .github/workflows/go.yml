@@ -1,11 +1,11 @@
-name: Backend CI/CD Pipeline
+name: Go
 
 on:
   push:
     branches:
-      - main # Trigger on push to main
-      - develop # Trigger on push to develop
-      - controller/* # Trigger on backend-related feature branches
+      - main       # Trigger on push to main
+      - develop    # Trigger on push to develop
+      - controller/*  # Trigger on push to controller
   pull_request:
     branches:
       - main
@@ -22,16 +22,20 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
-          go-version: "1.23.1"
+          go-version: '1.23.1'
 
+      # Change to the backend directory before running Go commands
       - name: Install dependencies
+        working-directory: ./backend
         run: go mod tidy
 
       - name: Run tests
+        working-directory: ./backend
         run: go test ./...
 
       - name: Build the app
-        run: go build -o backend-app .
+        working-directory: ./backend
+        run: go build -o fresh-grad-jobs .
 
       - name: Deploy (Optional step)
         run: echo "Deploy step here" # You can replace this with your actual deployment logic
