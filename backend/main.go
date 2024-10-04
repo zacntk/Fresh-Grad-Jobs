@@ -1,54 +1,15 @@
 package main
 
 import (
-	"fmt"
-	adminController "fresh-grad-jobs/handlers/users" // Import your user handlers
+	admin "fresh-grad-jobs/handlers/users" // Import your user handlers
+	services "fresh-grad-jobs/services"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin" // Import Gin framework
-	"github.com/golang-jwt/jwt/v5"
 )
 
-var secretKey = []byte("freshgradjobsismypraticeofgo")
-
-func GenerateJWT() (string, error) {
-	claims := jwt.MapClaims{
-		"role": "admin",
-		"exp":  time.Now().Add(time.Hour).Unix(),
-		"iss":  "freshgradjobs",
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	tokenString, err := token.SignedString(secretKey)
-	if err != nil {
-		return "", err
-	}
-
-	return tokenString, nil
-}
-
-func validateAdminJWT(tokenString string) error {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return secretKey, nil
-	})
-
-	if err != nil {
-		return err
-	}
-
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid && claims["role"] == "admin" {
-		return nil
-	} else {
-		return fmt.Errorf("invalid token")
-	}
-}
-
+// AdminAuthMiddleware checks for admin role in the JWT
 func AdminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -61,8 +22,17 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
-		if err := validateAdminJWT(token); err != nil {
+		// Validate the token and get the user role
+		role, err := services.ValidateJWT(token)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Invalid Token"})
+			c.Abort()
+			return
+		}
+
+		// Check if the user role is "admin"
+		if role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Insufficient permissions"})
 			c.Abort()
 			return
 		}
@@ -75,33 +45,59 @@ func main() {
 	// Create a new Gin router
 	router := gin.Default()
 
-	// Generate Token JWT for admin
-	router.GET("/", func(c *gin.Context) {
-		token, _ := GenerateJWT()
+	// login for Generate token
+	router.POST("/login", func(c *gin.Context) {
+		// Declare a struct to bind the JSON request
+		var loginRequest struct {
+			Email    string `json:"email" binding:"required,email"`
+			Password string `json:"password" binding:"required"`
+		}
+
+		// Bind JSON body to the struct
+		if err := c.ShouldBindJSON(&loginRequest); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request format"})
+			return
+		}
+
+		db, err := services.ConnectDB()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
+			return
+		}
+		defer db.Close() // Ensure the database connection is closed
+
+		// Generate the JWT using the email and password from the request
+		token, err := services.GenerateJWT(loginRequest.Email, loginRequest.Password, db)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": err.Error()})
+			return
+		}
+
+		// Return the token
 		c.JSON(http.StatusOK, gin.H{"token": token})
 	})
 
-	adminControllUser := router.Group("/admin", AdminAuthMiddleware())
+	adminRoute := router.Group("/admin", AdminAuthMiddleware())
 	{
 		// Route for approving a user by ID
-		adminControllUser.POST("/users/approve/:user-id", adminController.UserApprove)
+		adminRoute.POST("/users/approve/:user-id", admin.UserApprove)
 		// Route for deleting a user by ID
-		adminControllUser.DELETE("/users/delete/:user-id", adminController.UserDelete)
+		adminRoute.DELETE("/users/delete/:user-id", admin.UserDelete)
 		// Route for retrieving users based on role
 		// Get all users of a specific role
-		adminControllUser.GET("/users/views/:role", adminController.UserViews)
+		adminRoute.GET("/users/views/:role", admin.UserViews)
 		// Get a specific user by role and ID
-		adminControllUser.GET("/users/views/:role/:user-id", adminController.UserViews)
+		adminRoute.GET("/users/views/:role/:user-id", admin.UserViews)
 
 		// Route for approving a job by ID
-		adminControllUser.GET("/jobs/approve/:job-id", adminController.JobsApprove)
+		adminRoute.GET("/jobs/approve/:job-id", admin.JobsApprove)
 		// Route for deleting a job by ID
-		adminControllUser.GET("/jobs/delete/:job-id", adminController.JobsDelete)
+		adminRoute.GET("/jobs/delete/:job-id", admin.JobsDelete)
 		// Route for retrieving jobs
 		// Get all jobs with filters and pagination
-		adminControllUser.GET("/jobs/views", adminController.JobsViews) // Updated path
+		adminRoute.GET("/jobs/views", admin.JobsViews) // Updated path
 		// Get a specific job by ID
-		adminControllUser.GET("/jobs/views/:job-id", adminController.JobsViews)
+		adminRoute.GET("/jobs/views/:job-id", admin.JobsViews)
 	}
 
 	// Run the server on port 8080

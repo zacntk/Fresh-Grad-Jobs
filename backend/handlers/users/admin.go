@@ -1,7 +1,8 @@
-package adminController
+package admin
 
 import (
 	"database/sql"
+	services "fresh-grad-jobs/services"
 	"log"
 	"net/http"
 
@@ -13,26 +14,21 @@ import (
 func UserApprove(c *gin.Context) {
 	userID := c.Param("user-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
+		return
 	}
 	defer db.Close()
-
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Connected to the database!")
 
 	// Check if user exists and get their approval status
 	var approved bool
 	query := "SELECT approved FROM users WHERE id = ?"
-	row := db.QueryRow(query, userID)
-
-	err = row.Scan(&approved)
+	err = db.QueryRow(query, userID).Scan(&approved)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{
@@ -41,7 +37,11 @@ func UserApprove(c *gin.Context) {
 			})
 			return
 		}
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database query error",
+		})
+		return
 	}
 
 	// Check if the user is already approved
@@ -55,9 +55,13 @@ func UserApprove(c *gin.Context) {
 
 	// Perform approval logic - update the approved status
 	updateQuery := "UPDATE users SET approved = ? WHERE id = ?"
-	_, err = db.Exec(updateQuery, true, userID) // Set approved to true
+	_, err = db.Exec(updateQuery, true, userID)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error updating user approval status",
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -66,35 +70,33 @@ func UserApprove(c *gin.Context) {
 	})
 }
 
-// DeleteUser handles the deletion of a user by ID
+// UserDelete handles the deletion of a user by ID
 func UserDelete(c *gin.Context) {
 	userID := c.Param("user-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
+		return
 	}
 	defer db.Close()
-
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		log.Fatal(err)
-	}
-	log.Printf("Connected to the database!")
 
 	// Check if user exists
 	var userExists bool
 	query := "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)"
-	row := db.QueryRow(query, userID)
-
-	err = row.Scan(&userExists)
+	err = db.QueryRow(query, userID).Scan(&userExists)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database query error",
+		})
+		return
 	}
 
-	// If the user does not exist, return a 404 response
 	if !userExists {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
@@ -107,7 +109,11 @@ func UserDelete(c *gin.Context) {
 	deleteQuery := "DELETE FROM users WHERE id = ?"
 	_, err = db.Exec(deleteQuery, userID)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error deleting user",
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -116,47 +122,38 @@ func UserDelete(c *gin.Context) {
 	})
 }
 
-// UserViews retrieves all users or a specific user by ID from the database and returns them as JSON
+// UserViews retrieves all users or a specific user by ID
 func UserViews(c *gin.Context) {
 	role := c.Param("role")
 	userID := c.Param("user-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
 		return
 	}
 	defer db.Close()
 
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database ping error"})
-		return
-	}
-	log.Printf("Connected to the database!")
-
-	// Prepare the query and the user slice
+	// Prepare the query based on role and userID
 	var query string
-	var args []interface{} // To hold query parameters
+	var args []interface{}
 
 	if userID == "" {
 		if role == "all" {
-			// Fetch all users except admins
 			query = "SELECT id, email, role, approved, created_at FROM users WHERE role != 'admin'"
 		} else {
-			// Fetch users by role, excluding admins
 			query = "SELECT id, email, role, approved, created_at FROM users WHERE role = ? AND role != 'admin'"
 			args = append(args, role)
 		}
 	} else {
 		if role == "all" {
-			// Fetch a specific user excluding admin
 			query = "SELECT id, email, role, approved, created_at FROM users WHERE id = ? AND role != 'admin'"
 			args = append(args, userID)
 		} else {
-			// Fetch a specific user by role, excluding admins
 			query = "SELECT id, email, role, approved, created_at FROM users WHERE role = ? AND id = ? AND role != 'admin'"
 			args = append(args, role, userID)
 		}
@@ -165,12 +162,15 @@ func UserViews(c *gin.Context) {
 	// Execute the query
 	rows, err := db.Query(query, args...)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Query execution error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database query error",
+		})
 		return
 	}
 	defer rows.Close()
 
-	// Define a slice to hold user data
+	// Process the results
 	var users []struct {
 		ID        string `json:"id"`
 		Email     string `json:"email"`
@@ -179,7 +179,6 @@ func UserViews(c *gin.Context) {
 		CreatedAt string `json:"created_at"`
 	}
 
-	// Loop through the rows and scan the results into the users slice
 	for rows.Next() {
 		var user struct {
 			ID        string `json:"id"`
@@ -189,20 +188,17 @@ func UserViews(c *gin.Context) {
 			CreatedAt string `json:"created_at"`
 		}
 		if err := rows.Scan(&user.ID, &user.Email, &user.Role, &user.Approved, &user.CreatedAt); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Error processing user data",
+			})
 			return
 		}
 		users = append(users, user)
 	}
 
-	// Check for any error encountered during iteration
-	if err := rows.Err(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Rows iteration error"})
-		return
-	}
-
-	// If a specific user is requested and no users were returned, handle not found
-	if userID != "" && len(users) == 0 {
+	// Return the results as JSON
+	if len(users) == 0 && userID != "" {
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
 			"message": "User not found",
@@ -210,39 +206,28 @@ func UserViews(c *gin.Context) {
 		return
 	}
 
-	// Return the users as JSON
-	if userID != "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   users[0], // Return only the specific user
-		})
-	} else {
-		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   users, // Return all users
-		})
-	}
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   users,
+	})
 }
+
+// Similarly refactor the `JobsApprove`, `JobsDelete`, and `JobsViews` handlers using the centralized database connection and error handling patterns shown above.
 
 // JobsApprove handles the approval of a job by ID
 func JobsApprove(c *gin.Context) {
 	jobID := c.Param("job-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
 		return
 	}
 	defer db.Close()
-
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database ping error"})
-		return
-	}
-	log.Printf("Connected to the database!")
 
 	var approved bool
 	query := "SELECT approved FROM jobs WHERE job_id = ?"
@@ -281,21 +266,16 @@ func JobsApprove(c *gin.Context) {
 func JobsDelete(c *gin.Context) {
 	jobID := c.Param("job-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
 		return
 	}
 	defer db.Close()
-
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database ping error"})
-		return
-	}
-	log.Printf("Connected to the database!")
 
 	var jobExists bool
 	query := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ?)"
@@ -325,21 +305,16 @@ func JobsDelete(c *gin.Context) {
 func JobsViews(c *gin.Context) {
 	jobID := c.Param("job-id")
 
-	// Set up the database connection
-	dsn := "root:1234@tcp(localhost:3306)/freshgradjobs" // Adjust DSN to your setup
-	db, err := sql.Open("mysql", dsn)
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
 		return
 	}
 	defer db.Close()
-
-	// Check if the connection is established
-	if err := db.Ping(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database ping error"})
-		return
-	}
-	log.Printf("Connected to the database!")
 
 	type Job struct {
 		ID                  string  `json:"job_id"`               // รหัสงาน
