@@ -5,10 +5,44 @@ import (
 	services "fresh-grad-jobs/services"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
 )
+
+// AuthMiddleware checks for admin role
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Authorization header missing or malformed"})
+			c.Abort()
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Validate the token and get the claims
+		jwtClaims, err := services.ValidateJWT(token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Invalid token", "details": err.Error()})
+			c.Abort()
+			return
+		}
+
+		// Check for employer role
+		role := jwtClaims.Role
+		if role != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Insufficient permissions"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
 
 // UserApprove handles the approval of a user by ID
 func UserApprove(c *gin.Context) {

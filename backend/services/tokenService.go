@@ -29,9 +29,10 @@ func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 	iss := os.Getenv("APP_NAME")
 
 	// Query the database for user role (example with hardcoded email and password)
-	query := "SELECT role FROM users WHERE email = ? AND password = ?"
+	query := "SELECT id,role FROM users WHERE email = ? AND password = ?"
+	var id int
 	var role string
-	err := db.QueryRow(query, email, password).Scan(&role)
+	err := db.QueryRow(query, email, password).Scan(&id, &role)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", fmt.Errorf("user not found or invalid credentials")
@@ -41,6 +42,7 @@ func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 
 	// Create JWT claims
 	claims := jwt.MapClaims{
+		"id":   id,
 		"role": role,
 		"exp":  time.Now().Add(time.Hour * 1).Unix(), // Set expiration time to 1 hour
 		"iss":  iss,
@@ -58,8 +60,14 @@ func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 	return tokenString, nil
 }
 
-// ValidateJWT validates a JWT token and returns the user's role if valid
-func ValidateJWT(tokenString string) (string, error) {
+// JWTClaims holds the claims for the JWT token
+type JWTClaims struct {
+	ID   int    `json:"id"`
+	Role string `json:"role"`
+}
+
+// ValidateJWT validates a JWT token and returns the user ID and role
+func ValidateJWT(tokenString string) (*JWTClaims, error) {
 	// Parse and validate the token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Ensure the signing method is HMAC
@@ -77,7 +85,7 @@ func ValidateJWT(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	// Check token claims and validity
@@ -85,14 +93,27 @@ func ValidateJWT(tokenString string) (string, error) {
 		// Optional: Check the expiration time
 		if exp, ok := claims["exp"].(float64); ok {
 			if time.Unix(int64(exp), 0).Before(time.Now()) {
-				return "", fmt.Errorf("token has expired")
+				return nil, fmt.Errorf("token has expired")
 			}
 		}
-		// Return the user role
-		if role, ok := claims["role"].(string); ok {
-			return role, nil
+
+		// Create an instance of JWTClaims to hold the extracted claims
+		jwtClaims := &JWTClaims{}
+
+		// Extracting ID and role from claims
+		if id, ok := claims["id"].(float64); ok {
+			jwtClaims.ID = int(id) // Convert float64 to int
+		} else {
+			return nil, fmt.Errorf("id not found in token claims")
 		}
-		return "", fmt.Errorf("role not found in token claims")
+
+		if role, ok := claims["role"].(string); ok {
+			jwtClaims.Role = role
+		} else {
+			return nil, fmt.Errorf("role not found in token claims")
+		}
+
+		return jwtClaims, nil
 	}
-	return "", fmt.Errorf("invalid token")
+	return nil, fmt.Errorf("invalid token")
 }
