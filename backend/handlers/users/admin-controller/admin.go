@@ -3,7 +3,6 @@ package admin
 import (
 	"database/sql"
 	services "fresh-grad-jobs/services"
-	"log"
 	"net/http"
 	"strings"
 
@@ -61,7 +60,7 @@ func UserApprove(c *gin.Context) {
 
 	// Check if user exists and get their approval status
 	var approved bool
-	query := "SELECT approved FROM users WHERE id = ?"
+	query := "SELECT approved FROM users WHERE user_id = ?"
 	err = db.QueryRow(query, userID).Scan(&approved)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -88,7 +87,7 @@ func UserApprove(c *gin.Context) {
 	}
 
 	// Perform approval logic - update the approved status
-	updateQuery := "UPDATE users SET approved = ? WHERE id = ?"
+	updateQuery := "UPDATE users SET approved = ? WHERE user_id = ?"
 	_, err = db.Exec(updateQuery, true, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -121,7 +120,7 @@ func UserDelete(c *gin.Context) {
 
 	// Check if user exists
 	var userExists bool
-	query := "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)"
+	query := "SELECT EXISTS(SELECT 1 FROM users WHERE user_id = ?)"
 	err = db.QueryRow(query, userID).Scan(&userExists)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -140,7 +139,7 @@ func UserDelete(c *gin.Context) {
 	}
 
 	// Perform deletion logic
-	deleteQuery := "DELETE FROM users WHERE id = ?"
+	deleteQuery := "DELETE FROM users WHERE user_id = ?"
 	_, err = db.Exec(deleteQuery, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -178,17 +177,17 @@ func UserViews(c *gin.Context) {
 
 	if userID == "" {
 		if role == "all" {
-			query = "SELECT id, email, role, approved, created_at FROM users WHERE role != 'admin'"
+			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role != 'admin'"
 		} else {
-			query = "SELECT id, email, role, approved, created_at FROM users WHERE role = ? AND role != 'admin'"
+			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role = ? AND role != 'admin'"
 			args = append(args, role)
 		}
 	} else {
 		if role == "all" {
-			query = "SELECT id, email, role, approved, created_at FROM users WHERE id = ? AND role != 'admin'"
+			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE id = ? AND role != 'admin'"
 			args = append(args, userID)
 		} else {
-			query = "SELECT id, email, role, approved, created_at FROM users WHERE role = ? AND id = ? AND role != 'admin'"
+			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role = ? AND user_id = ? AND role != 'admin'"
 			args = append(args, role, userID)
 		}
 	}
@@ -273,7 +272,6 @@ func JobsApprove(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found"})
 			return
 		}
-		log.Fatal(err)
 	}
 
 	if approved {
@@ -287,7 +285,11 @@ func JobsApprove(c *gin.Context) {
 	updateQuery := "UPDATE jobs SET approved = ? WHERE job_id = ?"
 	_, err = db.Exec(updateQuery, true, jobID)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error updating job approval status",
+		})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -311,30 +313,42 @@ func JobsDelete(c *gin.Context) {
 	}
 	defer db.Close()
 
+	// Check if job exists
 	var jobExists bool
 	query := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ?)"
-	row := db.QueryRow(query, jobID)
-
-	err = row.Scan(&jobExists)
+	err = db.QueryRow(query, jobID).Scan(&jobExists)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database query error",
+		})
+		return
 	}
 
 	if !jobExists {
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found"})
+		c.JSON(http.StatusNotFound, gin.H{
+			"status":  "error",
+			"message": "Job not found",
+		})
 		return
 	}
 
 	deleteQuery := "DELETE FROM jobs WHERE job_id = ?"
 	_, err = db.Exec(deleteQuery, jobID)
 	if err != nil {
-		log.Fatal(err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error deleting job",
+		})
+		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Job deleted successfully"})
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "Job deleted successfully",
+	})
 }
 
-// UserViews retrieves all jobs or a specific job by ID from the database and returns them as JSON
 // JobsViews retrieves all jobs or a specific job by ID from the database and returns them as JSON
 func JobsViews(c *gin.Context) {
 	jobID := c.Param("job-id")
@@ -353,17 +367,17 @@ func JobsViews(c *gin.Context) {
 	type Job struct {
 		ID                  string  `json:"job_id"`               // รหัสงาน
 		Title               string  `json:"title"`                // ชื่องาน
-		Employer_ID         string  `json:"employer_id"`          // รหัสนายจ้าง
-		Job_Category        string  `json:"job_category"`         // หมวดหมู่งาน
-		Job_Type            string  `json:"job_type"`             // ประเภทงาน (งานประจำ, งานสัญญาจ้าง)
-		Min_Salary          float64 `json:"min_salary"`           // เงินเดือนขั้นต่ำ
-		Max_Salary          float64 `json:"max_salary"`           // เงินเดือนสูงสุด
-		Min_Experience      int     `json:"min_experience"`       // ประสบการณ์ขั้นต่ำ (ปี)
-		Max_Experience      int     `json:"max_experience"`       // ประสบการณ์สูงสุด (ปี)
-		Job_Responsibility  string  `json:"job_responsibility"`   // ความรับผิดชอบของงาน
+		EmployerID          string  `json:"employer_id"`          // รหัสนายจ้าง
+		JobCategory         string  `json:"job_category"`         // หมวดหมู่งาน
+		JobType             string  `json:"job_type"`             // ประเภทงาน (งานประจำ, งานสัญญาจ้าง)
+		MinSalary           float64 `json:"min_salary"`           // เงินเดือนขั้นต่ำ
+		MaxSalary           float64 `json:"max_salary"`           // เงินเดือนสูงสุด
+		MinExperience       int     `json:"min_experience"`       // ประสบการณ์ขั้นต่ำ (ปี)
+		MaxExperience       int     `json:"max_experience"`       // ประสบการณ์สูงสุด (ปี)
+		JobResponsibility   string  `json:"job_responsibility"`   // ความรับผิดชอบของงาน
 		Qualification       string  `json:"qualification"`        // คุณสมบัติที่ต้องการ
 		Benefits            string  `json:"benefits"`             // สวัสดิการ
-		Job_Description     string  `json:"job_description"`      // รายละเอียดงาน
+		JobDescription      string  `json:"job_description"`      // รายละเอียดงาน
 		Approved            bool    `json:"approved"`             // สถานะการอนุมัติ
 		CreatedAt           string  `json:"created_at"`           // วันเวลาที่สร้าง
 		Location            string  `json:"location"`             // สถานที่ทำงาน
@@ -387,7 +401,7 @@ func JobsViews(c *gin.Context) {
 
 		for rows.Next() {
 			var job Job
-			if err := rows.Scan(&job.ID, &job.Title, &job.Employer_ID, &job.Job_Category, &job.Job_Type, &job.Min_Salary, &job.Max_Salary, &job.Min_Experience, &job.Max_Experience, &job.Job_Responsibility, &job.Qualification, &job.Benefits, &job.Job_Description, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy, &job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel); err != nil {
+			if err := rows.Scan(&job.ID, &job.Title, &job.EmployerID, &job.JobCategory, &job.JobType, &job.MinSalary, &job.MaxSalary, &job.MinExperience, &job.MaxExperience, &job.JobResponsibility, &job.Qualification, &job.Benefits, &job.JobDescription, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy, &job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel); err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
 				return
 			}
@@ -404,7 +418,7 @@ func JobsViews(c *gin.Context) {
 		row := db.QueryRow(query, jobID)
 
 		var job Job
-		if err := row.Scan(&job.ID, &job.Title, &job.Employer_ID, &job.Job_Category, &job.Job_Type, &job.Min_Salary, &job.Max_Salary, &job.Min_Experience, &job.Max_Experience, &job.Job_Responsibility, &job.Qualification, &job.Benefits, &job.Job_Description, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy, &job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel); err != nil {
+		if err := row.Scan(&job.ID, &job.Title, &job.EmployerID, &job.JobCategory, &job.JobType, &job.MinSalary, &job.MaxSalary, &job.MinExperience, &job.MaxExperience, &job.JobResponsibility, &job.Qualification, &job.Benefits, &job.JobDescription, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy, &job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel); err != nil {
 			if err == sql.ErrNoRows {
 				c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found"})
 			} else {

@@ -29,10 +29,10 @@ func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 	iss := os.Getenv("APP_NAME")
 
 	// Query the database for user role (example with hardcoded email and password)
-	query := "SELECT id,role FROM users WHERE email = ? AND password = ?"
-	var id int
+	query := "SELECT user_id, role FROM users WHERE email = ? AND password = ?"
+	var userID int
 	var role string
-	err := db.QueryRow(query, email, password).Scan(&id, &role)
+	err := db.QueryRow(query, email, password).Scan(&userID, &role)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", fmt.Errorf("user not found or invalid credentials")
@@ -42,7 +42,7 @@ func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 
 	// Create JWT claims
 	claims := jwt.MapClaims{
-		"id":   id,
+		"id":   userID,
 		"role": role,
 		"exp":  time.Now().Add(time.Hour * 1).Unix(), // Set expiration time to 1 hour
 		"iss":  iss,
