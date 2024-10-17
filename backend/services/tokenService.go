@@ -9,35 +9,42 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
+	"golang.org/x/crypto/bcrypt"
 )
 
-// Initialize environment variables once (suggested to be done in main function)
+// Initialize environment variables (suggested to be done in the main function)
 func init() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("Warning: Error loading .env file. Ensure environment variables are set.")
 	}
 }
 
-// GenerateJWT generates a JWT for the given user with a specific role
+// GenerateJWT generates a JWT for the given user after verifying credentials
 func GenerateJWT(email, password string, db *sql.DB) (string, error) {
 	// Retrieve secret key and application name from the environment
 	secretKey := os.Getenv("SECRET_KEY")
 	if secretKey == "" {
-		log.Fatal("Secret key not found in environment variables")
+		return "", fmt.Errorf("secret key not found in environment variables")
 	}
 	iss := os.Getenv("APP_NAME")
 
-	// Query the database for user role (example with hardcoded email and password)
-	query := "SELECT user_id, role FROM users WHERE email = ? AND password = ?"
+	// Query the database for user credentials and role
+	query := "SELECT user_id, role, password_hash FROM users WHERE email = ?"
 	var userID int
-	var role string
-	err := db.QueryRow(query, email, password).Scan(&userID, &role)
+	var role, storedPasswordHash string
+
+	err := db.QueryRow(query, email).Scan(&userID, &role, &storedPasswordHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", fmt.Errorf("user not found or invalid credentials")
 		}
 		return "", fmt.Errorf("database query error: %v", err)
+	}
+
+	// Compare the stored hashed password with the provided password
+	if err := bcrypt.CompareHashAndPassword([]byte(storedPasswordHash), []byte(password)); err != nil {
+		return "", fmt.Errorf("invalid credentials")
 	}
 
 	// Create JWT claims
@@ -78,7 +85,7 @@ func ValidateJWT(tokenString string) (*JWTClaims, error) {
 		// Retrieve secret key from environment variables
 		secretKey := os.Getenv("SECRET_KEY")
 		if secretKey == "" {
-			log.Fatal("Secret key not found in environment variables")
+			return nil, fmt.Errorf("secret key not found in environment variables")
 		}
 
 		return []byte(secretKey), nil

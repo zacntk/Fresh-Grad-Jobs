@@ -3,6 +3,7 @@ package employer
 import (
 	"database/sql"
 	services "fresh-grad-jobs/services"
+	"log"
 	"net/http"
 	"strings"
 
@@ -10,38 +11,73 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
+// TODO: Create job ✅
+// สร้างประกาศงานใหม่ที่นายจ้างต้องการรับสมัคร
+
+// TODO: Delete job ✅
+// ลบประกาศงานที่สร้างไว้ เช่น งานที่ปิดรับสมัครแล้ว
+
+// TODO: Update job ✅
+// แก้ไขข้อมูลประกาศงาน เช่น อัปเดตเงินเดือนหรือคุณสมบัติที่ต้องการ
+
+// TODO: View job ✅
+// ดูรายละเอียดประกาศงานที่สร้างหรือโพสต์ไว้
+
+// TODO: View applications ✅
+// ดูรายชื่อและรายละเอียดผู้สมัครงานที่สมัครเข้ามา
+
+// Suggested enhancements
+
+// TODO: Search/filter applicants ❌
+// ค้นหาและกรองข้อมูลผู้สมัครงานตามเงื่อนไข เช่น ทักษะหรือประสบการณ์
+
+// TODO: Save applicant profiles ❌
+// บันทึกโปรไฟล์ผู้สมัครที่สนใจไว้เพื่อพิจารณาภายหลัง
+
 // AuthMiddleware checks for employer role in the JWT and retrieves employer_id
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 
+		// Log the incoming request
+		log.Printf("Starting authentication middleware for request: %s %s", c.Request.Method, c.Request.URL.Path)
+
+		// Check if Authorization header is present and valid
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			log.Println("Authorization header missing or malformed")
 			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Authorization header missing or malformed"})
 			c.Abort()
 			return
 		}
 
+		// Extract the token from the header
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
-		// Validate the token and get the claims
+		// Validate the token and retrieve claims
 		jwtClaims, err := services.ValidateJWT(token)
 		if err != nil {
+			log.Printf("Token validation failed: %v", err)
 			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Invalid token", "details": err.Error()})
 			c.Abort()
 			return
 		}
 
-		// Check for employer role
+		// Check if the role is "employer"
 		role := jwtClaims.Role
 		if role != "employer" {
+			log.Printf("Insufficient permissions: role '%s' attempted access", role)
 			c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Insufficient permissions"})
 			c.Abort()
 			return
 		}
 
+		// Log successful validation and role check
+		log.Printf("Authentication successful for employer_id: %d", jwtClaims.ID)
+
 		// Store employer_id in context for later use
 		c.Set("employer_id", jwtClaims.ID)
 
+		// Continue to the next middleware or handler
 		c.Next()
 	}
 }
@@ -68,8 +104,12 @@ func JobCreate(c *gin.Context) {
 		JobLevel            string  `json:"job_level" binding:"required"`
 	}
 
-	// Bind the request
+	// Log the request body for debugging
+	log.Println("Received job creation request")
+
+	// Bind the request body to the jobRequest struct
 	if err := c.ShouldBindJSON(&jobRequest); err != nil {
+		log.Printf("Error binding job creation request: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request format", "details": err.Error()})
 		return
 	}
@@ -77,42 +117,50 @@ func JobCreate(c *gin.Context) {
 	// Retrieve employer_id from the context
 	employerID, exists := c.Get("employer_id")
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found in context"})
+		log.Println("Employer ID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found"})
 		return
 	}
 
 	// Connect to the database
 	db, err := services.ConnectDB()
 	if err != nil {
+		log.Printf("Database connection error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
 		return
 	}
-	defer db.Close() // Ensure the database connection is closed
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database connection: %v", err)
+		}
+	}()
 
+	// Check if employer is approved
 	var approved bool
-	approvedQuery := "SELECT approved FROM users WHERE id=?"
-	err = db.QueryRow(approvedQuery, employerID).Scan(&approved)
-	if err != nil {
+	approvedQuery := "SELECT approved FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&approved); err != nil {
+		log.Printf("Error checking employer approval status: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
 		return
 	}
 
 	if !approved {
+		log.Printf("Employer %v is not approved", employerID)
 		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Employer is not approved"})
 		return
 	}
 
-	// Corrected SQL query with all relevant fields
+	// Prepare the query for job creation
 	query := `INSERT INTO jobs (
 		title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, max_experience,
 		job_responsibility, qualification, benefits, job_description, location, posted_by,
 		application_deadline, job_status, skills_required, job_level
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	// Execute the query with values from the struct
+	// Execute the query
 	_, err = db.Exec(query,
 		jobRequest.Title,
-		employerID, // Use the employer_id from the context
+		employerID, // Use employer_id from context
 		jobRequest.Job_Category,
 		jobRequest.Job_Type,
 		jobRequest.Min_Salary,
@@ -131,13 +179,15 @@ func JobCreate(c *gin.Context) {
 		jobRequest.JobLevel,
 	)
 
-	// Handle possible errors during query execution
+	// Handle potential errors during job creation
 	if err != nil {
+		log.Printf("Failed to create job for employer %v: %v", employerID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to create job", "details": err.Error()})
 		return
 	}
 
-	// Respond with success
+	// Job created successfully
+	log.Printf("Job created successfully for employer %v", employerID)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Job created successfully"})
 }
 
@@ -165,8 +215,12 @@ func JobsUpdate(c *gin.Context) {
 		JobLevel            *string  `json:"job_level"`
 	}
 
-	// Bind the request
+	// Log the incoming update request
+	log.Printf("Received job update request for job ID: %s", jobID)
+
+	// Bind the JSON request to the jobRequest struct
 	if err := c.ShouldBindJSON(&jobRequest); err != nil {
+		log.Printf("Error binding update request for job ID %s: %v", jobID, err)
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request format", "details": err.Error()})
 		return
 	}
@@ -174,33 +228,40 @@ func JobsUpdate(c *gin.Context) {
 	// Connect to the database
 	db, err := services.ConnectDB()
 	if err != nil {
+		log.Printf("Database connection error for job update (Job ID: %s): %v", jobID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database connection error"})
 		return
 	}
-	defer db.Close() // Ensure the database connection is closed
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database connection after updating job %s: %v", jobID, err)
+		}
+	}()
 
 	// Retrieve employer_id from the context
-	var exists bool
 	employerID, exists := c.Get("employer_id")
 	if !exists {
+		log.Printf("Employer ID not found in context for job update (Job ID: %s)", jobID)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found in context"})
 		return
 	}
 
-	// Check if the job exists
+	// Check if the job exists and belongs to the employer
+	var jobExists bool
 	checkQuery := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ? AND employer_id = ?)"
-	err = db.QueryRow(checkQuery, jobID, employerID).Scan(&exists)
-	if err != nil {
+	if err := db.QueryRow(checkQuery, jobID, employerID).Scan(&jobExists); err != nil {
+		log.Printf("Error checking job existence (Job ID: %s, Employer ID: %v): %v", jobID, employerID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database query error"})
 		return
 	}
 
-	if !exists {
+	if !jobExists {
+		log.Printf("Job not found or not owned by employer (Job ID: %s, Employer ID: %v)", jobID, employerID)
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found or not your job"})
 		return
 	}
 
-	// Prepare update fields
+	// Prepare fields to update
 	updateFields := []string{}
 	updateValues := []interface{}{}
 
@@ -273,24 +334,26 @@ func JobsUpdate(c *gin.Context) {
 		updateValues = append(updateValues, *jobRequest.JobLevel)
 	}
 
-	// Check if there are fields to update
+	// Ensure there are fields to update
 	if len(updateFields) == 0 {
+		log.Printf("No fields to update for job ID %s", jobID)
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "No fields to update"})
 		return
 	}
 
-	// Create the update query string
+	// Build the update query
 	updateQuery := "UPDATE jobs SET " + strings.Join(updateFields, ", ") + " WHERE job_id = ? AND employer_id = ?"
-	updateValues = append(updateValues, jobID, employerID) // Add job ID for the WHERE clause
+	updateValues = append(updateValues, jobID, employerID) // Add jobID and employerID to the query
 
 	// Execute the update query
-	_, err = db.Exec(updateQuery, updateValues...)
-	if err != nil {
+	if _, err := db.Exec(updateQuery, updateValues...); err != nil {
+		log.Printf("Failed to update job (Job ID: %s, Employer ID: %v): %v", jobID, employerID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to update job", "details": err.Error()})
 		return
 	}
 
-	// Respond with success
+	// Successfully updated the job
+	log.Printf("Job updated successfully (Job ID: %s, Employer ID: %v)", jobID, employerID)
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Job updated successfully"})
 }
 
@@ -298,22 +361,39 @@ func JobsUpdate(c *gin.Context) {
 func JobsDelete(c *gin.Context) {
 	jobID := c.Param("job-id")
 
+	// Log the incoming delete request
+	log.Printf("Received request to delete job with ID: %s", jobID)
+
 	// Use centralized DB connection
 	db, err := services.ConnectDB()
 	if err != nil {
+		log.Printf("Database connection error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Database connection error",
 		})
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database connection: %v", err)
+		}
+	}()
 
-	// Check if job exists
+	// Retrieve employer_id from the context
+	employerID, exists := c.Get("employer_id")
+	if !exists {
+		log.Printf("Employer ID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found in context"})
+		return
+	}
+
+	// Check if the job exists and belongs to the employer
 	var jobExists bool
-	query := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ?)"
-	err = db.QueryRow(query, jobID).Scan(&jobExists)
+	checkQuery := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ? AND employer_id = ?)"
+	err = db.QueryRow(checkQuery, jobID, employerID).Scan(&jobExists)
 	if err != nil {
+		log.Printf("Error querying job existence: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Database query error",
@@ -322,23 +402,31 @@ func JobsDelete(c *gin.Context) {
 	}
 
 	if !jobExists {
+		log.Printf("Job not found or does not belong to employer (Job ID: %s, Employer ID: %v)", jobID, employerID)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
-			"message": "Job not found",
+			"message": "Job not found or not owned by employer",
 		})
 		return
 	}
 
-	// Retrieve employer_id from the context
-	employerID, exists := c.Get("employer_id")
-	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found in context"})
+	// Begin a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error starting transaction",
+		})
 		return
 	}
 
+	// Perform the job deletion within the transaction
 	deleteQuery := "DELETE FROM jobs WHERE job_id = ? AND employer_id = ?"
-	_, err = db.Exec(deleteQuery, jobID, employerID)
+	_, err = tx.Exec(deleteQuery, jobID, employerID)
 	if err != nil {
+		log.Printf("Error deleting job (Job ID: %s): %v", jobID, err)
+		tx.Rollback() // Roll back the transaction if something goes wrong
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Error deleting job",
@@ -346,6 +434,18 @@ func JobsDelete(c *gin.Context) {
 		return
 	}
 
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		log.Printf("Error committing transaction: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error committing transaction",
+		})
+		return
+	}
+
+	// Log success and return response
+	log.Printf("Job deleted successfully (Job ID: %s, Employer ID: %v)", jobID, employerID)
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "Job deleted successfully",
@@ -356,20 +456,29 @@ func JobsDelete(c *gin.Context) {
 func JobsViews(c *gin.Context) {
 	jobID := c.Param("job-id")
 
+	// Log the request
+	log.Printf("Received request to view jobs. Job ID: %s", jobID)
+
 	// Use centralized DB connection
 	db, err := services.ConnectDB()
 	if err != nil {
+		log.Printf("Database connection error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Database connection error",
 		})
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database connection: %v", err)
+		}
+	}()
 
 	// Retrieve employer_id from the context
 	employerID, exists := c.Get("employer_id")
 	if !exists {
+		log.Printf("Employer ID not found in context")
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Employer ID not found in context",
@@ -377,99 +486,104 @@ func JobsViews(c *gin.Context) {
 		return
 	}
 
-	// Job represents the structure of a job listing
+	// Define the Job struct
 	type Job struct {
-		ID                  string  `json:"job_id"`               // รหัสงาน
-		Title               string  `json:"title"`                // ชื่องาน
-		EmployerID          string  `json:"employer_id"`          // รหัสนายจ้าง
-		JobCategory         string  `json:"job_category"`         // หมวดหมู่งาน
-		JobType             string  `json:"job_type"`             // ประเภทงาน (งานประจำ, งานสัญญาจ้าง)
-		MinSalary           float64 `json:"min_salary"`           // เงินเดือนขั้นต่ำ
-		MaxSalary           float64 `json:"max_salary"`           // เงินเดือนสูงสุด
-		MinExperience       int     `json:"min_experience"`       // ประสบการณ์ขั้นต่ำ (ปี)
-		MaxExperience       int     `json:"max_experience"`       // ประสบการณ์สูงสุด (ปี)
-		JobResponsibility   string  `json:"job_responsibility"`   // ความรับผิดชอบของงาน
-		Qualification       string  `json:"qualification"`        // คุณสมบัติที่ต้องการ
-		Benefits            string  `json:"benefits"`             // สวัสดิการ
-		JobDescription      string  `json:"job_description"`      // รายละเอียดงาน
-		Approved            bool    `json:"approved"`             // สถานะการอนุมัติ
-		CreatedAt           string  `json:"created_at"`           // วันเวลาที่สร้าง
-		Location            string  `json:"location"`             // สถานที่ทำงาน
-		PostedBy            string  `json:"posted_by"`            // ผู้โพสต์งาน
-		ApplicationDeadline string  `json:"application_deadline"` // วันหมดเขตการสมัคร
-		JobStatus           string  `json:"job_status"`           // สถานะงาน (เปิดรับสมัคร, ปิดรับสมัคร)
-		SkillsRequired      string  `json:"skills_required"`      // ทักษะที่ต้องการ
-		JobLevel            string  `json:"job_level"`            // ระดับงาน (Junior, Mid-level, Senior)
+		ID                  string  `json:"job_id"`
+		Title               string  `json:"title"`
+		EmployerID          string  `json:"employer_id"`
+		JobCategory         string  `json:"job_category"`
+		JobType             string  `json:"job_type"`
+		MinSalary           float64 `json:"min_salary"`
+		MaxSalary           float64 `json:"max_salary"`
+		MinExperience       int     `json:"min_experience"`
+		MaxExperience       int     `json:"max_experience"`
+		JobResponsibility   string  `json:"job_responsibility"`
+		Qualification       string  `json:"qualification"`
+		Benefits            string  `json:"benefits"`
+		JobDescription      string  `json:"job_description"`
+		Approved            bool    `json:"approved"`
+		CreatedAt           string  `json:"created_at"`
+		Location            string  `json:"location"`
+		PostedBy            string  `json:"posted_by"`
+		ApplicationDeadline string  `json:"application_deadline"`
+		JobStatus           string  `json:"job_status"`
+		SkillsRequired      string  `json:"skills_required"`
+		JobLevel            string  `json:"job_level"`
 	}
 
-	// If jobID is empty, fetch all jobs for the employer
+	// Prepare the query
+	var query string
+	var args []interface{}
+
 	if jobID == "" {
-		query := `
-			SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
-			max_experience, job_responsibility, qualification, benefits, job_description, approved, 
-			created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
-			FROM jobs WHERE employer_id = ?
-		`
-
-		rows, err := db.Query(query, employerID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Query execution error"})
-			return
-		}
-		defer rows.Close()
-
-		var jobs []Job
-
-		for rows.Next() {
-			var job Job
-			if err := rows.Scan(
-				&job.ID, &job.Title, &job.EmployerID, &job.JobCategory, &job.JobType, &job.MinSalary,
-				&job.MaxSalary, &job.MinExperience, &job.MaxExperience, &job.JobResponsibility, &job.Qualification,
-				&job.Benefits, &job.JobDescription, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy,
-				&job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel,
-			); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
-				return
-			}
-			jobs = append(jobs, job)
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   jobs,
-		})
-
+		// Fetch all jobs for the employer
+		query = `
+									SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
+																max_experience, job_responsibility, qualification, benefits, job_description, approved, 
+																created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
+									FROM jobs 
+									WHERE employer_id = ?
+					`
+		args = append(args, employerID)
 	} else {
-		// If jobID is provided, fetch the specific job for the employer
-		query := `
-			SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
-			max_experience, job_responsibility, qualification, benefits, job_description, approved, 
-			created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
-			FROM jobs WHERE job_id = ? AND employer_id = ?
-		`
+		// Fetch specific job for the employer
+		query = `
+									SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
+																max_experience, job_responsibility, qualification, benefits, job_description, approved, 
+																created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
+									FROM jobs 
+									WHERE job_id = ? AND employer_id = ?
+					`
+		args = append(args, jobID, employerID)
+	}
 
-		row := db.QueryRow(query, jobID, employerID)
+	// Execute the query
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		log.Printf("Query execution error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Query execution error",
+		})
+		return
+	}
+	defer rows.Close()
 
+	// Process the results
+	var jobs []Job
+	for rows.Next() {
 		var job Job
-		if err := row.Scan(
+		if err := rows.Scan(
 			&job.ID, &job.Title, &job.EmployerID, &job.JobCategory, &job.JobType, &job.MinSalary,
 			&job.MaxSalary, &job.MinExperience, &job.MaxExperience, &job.JobResponsibility, &job.Qualification,
 			&job.Benefits, &job.JobDescription, &job.Approved, &job.CreatedAt, &job.Location, &job.PostedBy,
 			&job.ApplicationDeadline, &job.JobStatus, &job.SkillsRequired, &job.JobLevel,
 		); err != nil {
-			if err == sql.ErrNoRows {
-				c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found"})
-			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
-			}
+			log.Printf("Row scan error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  "error",
+				"message": "Row scan error",
+			})
 			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status": "success",
-			"data":   job,
-		})
+		jobs = append(jobs, job)
 	}
+
+	// Check for errors after scanning
+	if err := rows.Err(); err != nil {
+		log.Printf("Rows error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error processing rows",
+		})
+		return
+	}
+
+	// Return the results
+	c.JSON(http.StatusOK, gin.H{
+		"status": "success",
+		"data":   jobs,
+	})
 }
 
 // ApplicationViews for employers to see which fresh graduates have applied for the job posting
@@ -477,16 +591,24 @@ func ApplicationViews(c *gin.Context) {
 	applicationID := c.Param("application-id")
 	jobID := c.Param("job-id")
 
+	// Log request for viewing applications
+	log.Printf("ApplicationViews called with applicationID: %s, jobID: %s", applicationID, jobID)
+
 	// Use centralized DB connection
 	db, err := services.ConnectDB()
 	if err != nil {
+		log.Printf("Database connection error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Database connection error",
 		})
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing DB connection: %v", err)
+		}
+	}()
 
 	// Struct to hold application data
 	type Application struct {
@@ -499,36 +621,51 @@ func ApplicationViews(c *gin.Context) {
 	// Retrieve employer_id from the context
 	employerID, exists := c.Get("employer_id")
 	if !exists {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Employer ID not found in context"})
+		log.Printf("Employer ID not found in context")
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Employer ID not found in context",
+		})
 		return
 	}
 
+	// If no application ID is provided, fetch all applications for a job
 	if applicationID == "" {
-		// Prepare the SQL query with a JOIN to get all applications for a specific job
-		query := `
-			SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
-			FROM applications a 
-			INNER JOIN jobs j ON a.job_id = j.job_id 
-			INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
-			WHERE j.employer_id = ? AND a.job_id = ?`
+		log.Printf("Fetching all applications for jobID: %s", jobID)
 
-		// Execute the query with employerID and jobID
+		query := `
+									SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
+									FROM applications a 
+									INNER JOIN jobs j ON a.job_id = j.job_id 
+									INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
+									WHERE j.employer_id = ? AND a.job_id = ?
+					`
+
 		rows, err := db.Query(query, employerID, jobID)
 		if err != nil {
+			log.Printf("Query execution error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Query execution error"})
 			return
 		}
 		defer rows.Close()
 
-		var applications []Application // Initialize an empty slice of applications
+		var applications []Application
 
 		for rows.Next() {
 			var application Application
 			if err := rows.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.FreshGradResume); err != nil {
+				log.Printf("Row scan error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
 				return
 			}
 			applications = append(applications, application)
+		}
+
+		// Check for any errors during row iteration
+		if err := rows.Err(); err != nil {
+			log.Printf("Rows iteration error: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error processing applications"})
+			return
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -537,21 +674,26 @@ func ApplicationViews(c *gin.Context) {
 		})
 
 	} else {
-		// Query for a specific application by application ID
+		// Fetch specific application based on applicationID
+		log.Printf("Fetching application with applicationID: %s", applicationID)
+
 		query := `
-			SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
-			FROM applications a 
-			INNER JOIN jobs j ON a.job_id = j.job_id 
-			INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
-			WHERE a.application_id = ? AND j.employer_id = ? AND a.job_id = ?`
+									SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
+									FROM applications a 
+									INNER JOIN jobs j ON a.job_id = j.job_id 
+									INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
+									WHERE a.application_id = ? AND j.employer_id = ? AND a.job_id = ?
+					`
 
 		row := db.QueryRow(query, applicationID, employerID, jobID)
 
 		var application Application
 		if err := row.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.FreshGradResume); err != nil {
 			if err == sql.ErrNoRows {
+				log.Printf("Application not found for applicationID: %s", applicationID)
 				c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Application not found"})
 			} else {
+				log.Printf("Row scan error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
 			}
 			return
