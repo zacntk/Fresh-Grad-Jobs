@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"database/sql"
 	"fresh-grad-jobs/services"
 	"log"
 	"net/http"
@@ -9,7 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// SignInHandler handles the user login and generates a token
+// SignInHandler handles the user login and generates a JWT token
 func SignInHandler(c *gin.Context) {
 	// Declare a struct to bind the JSON request
 	var loginRequest struct {
@@ -35,13 +36,20 @@ func SignInHandler(c *gin.Context) {
 	}
 	defer db.Close()
 
-	// Fetch the user information from the database
+	// Combine fetching user information and suspension status into a single query
 	var storedPasswordHash string
-	query := "SELECT password_hash FROM users WHERE email = ?"
-	err = db.QueryRow(query, loginRequest.Email).Scan(&storedPasswordHash)
+	var userID int
+	var isSuspended bool
+	query := "SELECT user_id, password_hash, suspended FROM users WHERE email = ?"
+	err = db.QueryRow(query, loginRequest.Email).Scan(&userID, &storedPasswordHash, &isSuspended)
 	if err != nil {
-		log.Printf("User not found or database error for email: %s, error: %v", loginRequest.Email, err)
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Invalid email or password"})
+		if err == sql.ErrNoRows {
+			log.Printf("User not found for email: %s", loginRequest.Email)
+			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Invalid email or password"})
+			return
+		}
+		log.Printf("Database query error for email: %s, error: %v", loginRequest.Email, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Database query error"})
 		return
 	}
 
@@ -52,8 +60,18 @@ func SignInHandler(c *gin.Context) {
 		return
 	}
 
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", userID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
+		})
+		return
+	}
+
 	// Generate the JWT token
-	token, err := services.GenerateJWT(loginRequest.Email, loginRequest.Password, db)
+	token, err := services.GenerateJWT(userID, db)
 	if err != nil {
 		log.Printf("Error generating JWT for email: %s, error: %v", loginRequest.Email, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Token generation error"})

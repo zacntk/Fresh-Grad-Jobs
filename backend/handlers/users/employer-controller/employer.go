@@ -28,7 +28,7 @@ import (
 
 // Suggested enhancements
 
-// TODO: Search/filter applicants ❌
+// TODO: Search/filter applicants ✅
 // ค้นหาและกรองข้อมูลผู้สมัครงานตามเงื่อนไข เช่น ทักษะหรือประสบการณ์
 
 // TODO: Save applicant profiles ❌
@@ -136,17 +136,27 @@ func JobCreate(c *gin.Context) {
 	}()
 
 	// Check if employer is approved
-	var approved bool
-	approvedQuery := "SELECT approved FROM users WHERE user_id=?"
-	if err := db.QueryRow(approvedQuery, employerID).Scan(&approved); err != nil {
+	var isApproved, isSuspended bool
+	approvedQuery := "SELECT approved, suspended FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&isApproved, &isSuspended); err != nil {
 		log.Printf("Error checking employer approval status: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
 		return
 	}
 
-	if !approved {
+	if !isApproved {
 		log.Printf("Employer %v is not approved", employerID)
-		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Employer is not approved"})
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Your account is not approved"})
+		return
+	}
+
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", employerID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
+		})
 		return
 	}
 
@@ -246,6 +256,31 @@ func JobsUpdate(c *gin.Context) {
 		return
 	}
 
+	// Check if employer is approved
+	var isApproved, isSuspended bool
+	approvedQuery := "SELECT approved, suspended FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&isApproved, &isSuspended); err != nil {
+		log.Printf("Error checking employer approval status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
+		return
+	}
+
+	if !isApproved {
+		log.Printf("Employer %v is not approved", employerID)
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Your account is not approved"})
+		return
+	}
+
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", employerID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
+		})
+		return
+	}
+
 	// Check if the job exists and belongs to the employer
 	var jobExists bool
 	checkQuery := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ? AND employer_id = ?)"
@@ -257,7 +292,7 @@ func JobsUpdate(c *gin.Context) {
 
 	if !jobExists {
 		log.Printf("Job not found or not owned by employer (Job ID: %s, Employer ID: %v)", jobID, employerID)
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found or not your job"})
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Job not found"})
 		return
 	}
 
@@ -388,6 +423,31 @@ func JobsDelete(c *gin.Context) {
 		return
 	}
 
+	// Check if employer is approved
+	var isApproved, isSuspended bool
+	approvedQuery := "SELECT approved, suspended FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&isApproved, &isSuspended); err != nil {
+		log.Printf("Error checking employer approval status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
+		return
+	}
+
+	if !isApproved {
+		log.Printf("Employer %v is not approved", employerID)
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Your account is not approved"})
+		return
+	}
+
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", employerID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
+		})
+		return
+	}
+
 	// Check if the job exists and belongs to the employer
 	var jobExists bool
 	checkQuery := "SELECT EXISTS(SELECT 1 FROM jobs WHERE job_id = ? AND employer_id = ?)"
@@ -405,7 +465,7 @@ func JobsDelete(c *gin.Context) {
 		log.Printf("Job not found or does not belong to employer (Job ID: %s, Employer ID: %v)", jobID, employerID)
 		c.JSON(http.StatusNotFound, gin.H{
 			"status":  "error",
-			"message": "Job not found or not owned by employer",
+			"message": "Job not found",
 		})
 		return
 	}
@@ -486,6 +546,31 @@ func JobsViews(c *gin.Context) {
 		return
 	}
 
+	// Check if employer is approved
+	var isApproved, isSuspended bool
+	approvedQuery := "SELECT approved, suspended FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&isApproved, &isSuspended); err != nil {
+		log.Printf("Error checking employer approval status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
+		return
+	}
+
+	if !isApproved {
+		log.Printf("Employer %v is not approved", employerID)
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Your account is not approved"})
+		return
+	}
+
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", employerID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
+		})
+		return
+	}
+
 	// Define the Job struct
 	type Job struct {
 		ID                  string  `json:"job_id"`
@@ -511,29 +596,79 @@ func JobsViews(c *gin.Context) {
 		JobLevel            string  `json:"job_level"`
 	}
 
+	// Filters
+	jobType := c.Query("job_type")             // Filter by job type
+	jobCategory := c.Query("job_category")     // Filter by job category
+	minSalary := c.Query("min_salary")         // Filter by minimum salary
+	maxSalary := c.Query("max_salary")         // Filter by maximum salary
+	minExperience := c.Query("min_experience") // Filter by minimum experience
+	maxExperience := c.Query("max_experience") // Filter by maximum experience
+	location := c.Query("location")            // Filter by location
+	approvedFilter := c.Query("approved")      // Filter by approval status
+	createdAfter := c.Query("created_after")   // Filter by jobs created after a certain date
+	createdBefore := c.Query("created_before") // Filter by jobs created before a certain date
+
 	// Prepare the query
 	var query string
 	var args []interface{}
 
 	if jobID == "" {
-		// Fetch all jobs for the employer
-		query = `
-									SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
-																max_experience, job_responsibility, qualification, benefits, job_description, approved, 
-																created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
-									FROM jobs 
-									WHERE employer_id = ?
-					`
+		query = "SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, " +
+			"max_experience, job_responsibility, qualification, benefits, job_description, approved, created_at, " +
+			"location, posted_by, application_deadline, job_status, skills_required, job_level FROM jobs WHERE employer_id = ?"
 		args = append(args, employerID)
+
+		// Add filters to the query
+		if jobType != "" {
+			query += " AND job_type = ?"
+			args = append(args, jobType)
+		}
+		if jobCategory != "" {
+			query += " AND job_category = ?"
+			args = append(args, jobCategory)
+		}
+		if minSalary != "" {
+			query += " AND min_salary >= ?"
+			args = append(args, minSalary)
+		}
+		if maxSalary != "" {
+			query += " AND max_salary <= ?"
+			args = append(args, maxSalary)
+		}
+		if minExperience != "" {
+			query += " AND min_experience >= ?"
+			args = append(args, minExperience)
+		}
+		if maxExperience != "" {
+			query += " AND max_experience <= ?"
+			args = append(args, maxExperience)
+		}
+		if location != "" {
+			query += " AND location = ?"
+			args = append(args, location)
+		}
+		if approvedFilter != "" {
+			query += " AND approved = ?"
+			if approvedFilter == "true" {
+				args = append(args, true)
+			} else {
+				args = append(args, false)
+			}
+		}
+		if createdAfter != "" {
+			query += " AND created_at >= ?"
+			args = append(args, createdAfter)
+		}
+		if createdBefore != "" {
+			query += " AND created_at <= ?"
+			args = append(args, createdBefore)
+		}
+
 	} else {
-		// Fetch specific job for the employer
-		query = `
-									SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, 
-																max_experience, job_responsibility, qualification, benefits, job_description, approved, 
-																created_at, location, posted_by, application_deadline, job_status, skills_required, job_level 
-									FROM jobs 
-									WHERE job_id = ? AND employer_id = ?
-					`
+		// If a specific job ID is provided, retrieve the job by ID
+		query = "SELECT job_id, title, employer_id, job_category, job_type, min_salary, max_salary, min_experience, " +
+			"max_experience, job_responsibility, qualification, benefits, job_description, approved, created_at, " +
+			"location, posted_by, application_deadline, job_status, skills_required, job_level FROM jobs WHERE job_id = ? AND employer_id = ?"
 		args = append(args, jobID, employerID)
 	}
 
@@ -625,6 +760,31 @@ func ApplicationViews(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"message": "Employer ID not found in context",
+		})
+		return
+	}
+
+	// Check if employer is approved
+	var isApproved, isSuspended bool
+	approvedQuery := "SELECT approved, suspended FROM users WHERE user_id=?"
+	if err := db.QueryRow(approvedQuery, employerID).Scan(&isApproved, &isSuspended); err != nil {
+		log.Printf("Error checking employer approval status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Error checking employer approval status"})
+		return
+	}
+
+	if !isApproved {
+		log.Printf("Employer %v is not approved", employerID)
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Your account is not approved"})
+		return
+	}
+
+	// Check if the user is suspended
+	if isSuspended {
+		log.Printf("User with ID %d is suspended", employerID)
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Your account is suspended",
 		})
 		return
 	}

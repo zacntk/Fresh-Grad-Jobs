@@ -9,7 +9,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Initialize environment variables (suggested to be done in the main function)
@@ -21,37 +20,34 @@ func init() {
 }
 
 // GenerateJWT generates a JWT for the given user after verifying credentials
-func GenerateJWT(email, password string, db *sql.DB) (string, error) {
+func GenerateJWT(userID int, db *sql.DB) (string, error) {
 	// Retrieve secret key and application name from the environment
 	secretKey := os.Getenv("SECRET_KEY")
 	if secretKey == "" {
 		return "", fmt.Errorf("secret key not found in environment variables")
 	}
+
 	iss := os.Getenv("APP_NAME")
-
-	// Query the database for user credentials and role
-	query := "SELECT user_id, role, password_hash FROM users WHERE email = ?"
-	var userID int
-	var role, storedPasswordHash string
-
-	err := db.QueryRow(query, email).Scan(&userID, &role, &storedPasswordHash)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("user not found or invalid credentials")
-		}
-		return "", fmt.Errorf("database query error: %v", err)
+	if iss == "" {
+		return "", fmt.Errorf("app name not found in environment variables")
 	}
 
-	// Compare the stored hashed password with the provided password
-	if err := bcrypt.CompareHashAndPassword([]byte(storedPasswordHash), []byte(password)); err != nil {
-		return "", fmt.Errorf("invalid credentials")
+	// Query the database for the user's role
+	query := "SELECT role FROM users WHERE user_id = ?"
+	var role string
+	err := db.QueryRow(query, userID).Scan(&role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("user not found")
+		}
+		return "", fmt.Errorf("database query error: %v", err)
 	}
 
 	// Create JWT claims
 	claims := jwt.MapClaims{
 		"id":   userID,
 		"role": role,
-		"exp":  time.Now().Add(time.Hour * 1).Unix(), // Set expiration time to 1 hour
+		"exp":  time.Now().Add(time.Hour * 1).Unix(), // Set expiration time
 		"iss":  iss,
 	}
 

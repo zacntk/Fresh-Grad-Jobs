@@ -31,10 +31,10 @@ import (
 
 // Suggested enhancements
 
-// TODO: Suspend user ❌
+// TODO: Suspend user ✅
 // ระงับการใช้งานของผู้ใช้ชั่วคราวในกรณีที่มีการละเมิดกฎ
 
-// TODO: Search/filter users/jobs ❌
+// TODO: Search/filter users/jobs ✅
 // ค้นหาและกรองข้อมูลผู้ใช้หรือประกาศงานตามเงื่อนไขที่กำหนด เช่น ตามตำแหน่งงาน หรือชื่อผู้ใช้
 
 // TODO: Analytics dashboard ❌
@@ -95,9 +95,9 @@ func UserApprove(c *gin.Context) {
 	defer db.Close()
 
 	// Check if user exists and get their approval status
-	var approved bool
+	var isApproved bool
 	query := "SELECT approved FROM users WHERE user_id = ?"
-	err = db.QueryRow(query, userID).Scan(&approved)
+	err = db.QueryRow(query, userID).Scan(&isApproved)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("User not found: %s", userID)
@@ -116,7 +116,7 @@ func UserApprove(c *gin.Context) {
 	}
 
 	// Check if the user is already approved
-	if approved {
+	if isApproved {
 		log.Printf("User %s is already approved", userID)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -141,6 +141,73 @@ func UserApprove(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
 		"message": "User approved successfully",
+	})
+}
+
+// UserSuspend handles the suspension of a user by ID
+func UserSuspend(c *gin.Context) {
+	userID := c.Param("user-id")
+	log.Printf("Attempting to suspend user with ID: %s", userID)
+
+	// Use centralized DB connection
+	db, err := services.ConnectDB()
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Database connection error",
+		})
+		return
+	}
+	defer db.Close()
+
+	// Check if user exists and retrieve suspension status
+	var isSuspended bool
+	query := "SELECT suspended FROM users WHERE user_id = ?"
+	err = db.QueryRow(query, userID).Scan(&isSuspended)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("User with ID %s not found", userID)
+			c.JSON(http.StatusNotFound, gin.H{
+				"status":  "error",
+				"message": "User not found",
+			})
+			return
+		}
+		log.Printf("Error querying user suspension status: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error querying user suspension status",
+		})
+		return
+	}
+
+	// Check if the user is already suspended
+	if isSuspended {
+		log.Printf("User with ID %s is already suspended", userID)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  "error",
+			"message": "User is already suspended",
+		})
+		return
+	}
+
+	// Update suspension status
+	updateQuery := "UPDATE users SET suspended = ? WHERE user_id = ?"
+	_, err = db.Exec(updateQuery, true, userID)
+	if err != nil {
+		log.Printf("Error updating suspension status for user %s: %v", userID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Error updating user suspension status",
+		})
+		return
+	}
+
+	log.Printf("User with ID %s suspended successfully", userID)
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "success",
+		"message": "User suspended successfully",
 	})
 }
 
@@ -202,13 +269,23 @@ func UserDelete(c *gin.Context) {
 	})
 }
 
-// UserViews retrieves all users or a specific user by ID
 func UserViews(c *gin.Context) {
-	role := c.Param("role")
-	userID := c.Param("user-id")
+	// Get role and user-id from query parameters
+	role := c.Query("role")      // Role is now retrieved as a query parameter
+	userID := c.Param("user-id") // Keep user-id as a path parameter for individual user lookup
+
+	// Additional filters
+	emailFilter := c.Query("email")            // Optional email filter
+	approvedFilter := c.Query("approved")      // Optional approval status filter
+	suspendedFilter := c.Query("suspended")    // Optional suspension status filter
+	createdAfter := c.Query("created_after")   // Optional created_at filter (after a certain date)
+	createdBefore := c.Query("created_before") // Optional created_at filter (before a certain date)
+
+	limit := c.DefaultQuery("limit", "10")  // Pagination limit (default to 10)
+	offset := c.DefaultQuery("offset", "0") // Pagination offset (default to 0)
+
 	log.Printf("Retrieving users. Role: %s, UserID: %s", role, userID)
 
-	// Use centralized DB connection
 	db, err := services.ConnectDB()
 	if err != nil {
 		log.Printf("Database connection error: %v", err)
@@ -220,26 +297,66 @@ func UserViews(c *gin.Context) {
 	}
 	defer db.Close()
 
-	// Prepare the query based on role and userID
+	// Base query
 	var query string
 	var args []interface{}
 
+	// Adjust query for filtering based on userID or all users
 	if userID == "" {
-		if role == "all" {
-			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role != 'admin'"
+		if role == "" || role == "all" {
+			query = "SELECT user_id, email, role, approved, suspended, created_at FROM users WHERE role != 'admin'"
 		} else {
-			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role = ? AND role != 'admin'"
+			query = "SELECT user_id, email, role, approved, suspended, created_at FROM users WHERE role = ? AND role != 'admin'"
 			args = append(args, role)
 		}
 	} else {
-		if role == "all" {
-			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE user_id = ? AND role != 'admin'"
+		if role == "" || role == "all" {
+			query = "SELECT user_id, email, role, approved, suspended, created_at FROM users WHERE user_id = ? AND role != 'admin'"
 			args = append(args, userID)
 		} else {
-			query = "SELECT user_id, email, role, approved, created_at FROM users WHERE role = ? AND user_id = ? AND role != 'admin'"
+			query = "SELECT user_id, email, role, approved, suspended, created_at FROM users WHERE role = ? AND user_id = ? AND role != 'admin'"
 			args = append(args, role, userID)
 		}
 	}
+
+	// Apply filters (dynamically add WHERE clauses)
+	if emailFilter != "" {
+		query += " AND email LIKE ?"
+		args = append(args, "%"+emailFilter+"%") // Partial match for email
+	}
+
+	if approvedFilter != "" {
+		query += " AND approved = ?"
+		if approvedFilter == "true" {
+			args = append(args, true)
+		} else {
+			args = append(args, false)
+		}
+	}
+
+	if suspendedFilter != "" {
+		query += " AND suspended = ?"
+		// Interpret "true" or "false" as actual boolean values
+		if suspendedFilter == "true" {
+			args = append(args, true)
+		} else {
+			args = append(args, false)
+		}
+	}
+
+	if createdAfter != "" {
+		query += " AND created_at >= ?"
+		args = append(args, createdAfter)
+	}
+
+	if createdBefore != "" {
+		query += " AND created_at <= ?"
+		args = append(args, createdBefore)
+	}
+
+	// Add pagination to the query
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 
 	// Execute the query
 	rows, err := db.Query(query, args...)
@@ -253,12 +370,12 @@ func UserViews(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	// Process the results
 	var users []struct {
 		ID        string `json:"user_id"`
 		Email     string `json:"email"`
 		Role      string `json:"role"`
 		Approved  bool   `json:"approved"`
+		Suspended bool   `json:"suspended"`
 		CreatedAt string `json:"created_at"`
 	}
 
@@ -268,9 +385,10 @@ func UserViews(c *gin.Context) {
 			Email     string `json:"email"`
 			Role      string `json:"role"`
 			Approved  bool   `json:"approved"`
+			Suspended bool   `json:"suspended"`
 			CreatedAt string `json:"created_at"`
 		}
-		if err := rows.Scan(&user.ID, &user.Email, &user.Role, &user.Approved, &user.CreatedAt); err != nil {
+		if err := rows.Scan(&user.ID, &user.Email, &user.Role, &user.Approved, &user.Suspended, &user.CreatedAt); err != nil {
 			log.Printf("Error processing user data: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  "error",
@@ -281,7 +399,6 @@ func UserViews(c *gin.Context) {
 		users = append(users, user)
 	}
 
-	// Return the results as JSON
 	if len(users) == 0 && userID != "" {
 		log.Printf("User not found: %s", userID)
 		c.JSON(http.StatusNotFound, gin.H{
@@ -315,11 +432,11 @@ func JobsApprove(c *gin.Context) {
 	}
 	defer db.Close()
 
-	var approved bool
+	var isApproved bool
 	query := "SELECT approved FROM jobs WHERE job_id = ?"
 	row := db.QueryRow(query, jobID)
 
-	err = row.Scan(&approved)
+	err = row.Scan(&isApproved)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("Job not found: %s", jobID)
@@ -331,7 +448,7 @@ func JobsApprove(c *gin.Context) {
 		return
 	}
 
-	if approved {
+	if isApproved {
 		log.Printf("Job %s is already approved", jobID)
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  "error",
@@ -456,9 +573,72 @@ func JobsViews(c *gin.Context) {
 		JobLevel            string  `json:"job_level"`
 	}
 
+	// Filters
+	jobType := c.Query("job_type")             // Filter by job type
+	jobCategory := c.Query("job_category")     // Filter by job category
+	minSalary := c.Query("min_salary")         // Filter by minimum salary
+	maxSalary := c.Query("max_salary")         // Filter by maximum salary
+	minExperience := c.Query("min_experience") // Filter by minimum experience
+	maxExperience := c.Query("max_experience") // Filter by maximum experience
+	location := c.Query("location")            // Filter by location
+	approvedFilter := c.Query("approved")      // Filter by approval status
+	createdAfter := c.Query("created_after")   // Filter by jobs created after a certain date
+	createdBefore := c.Query("created_before") // Filter by jobs created before a certain date
+
+	var query string
+	var args []interface{}
+
 	if jobID == "" {
-		query := "SELECT * FROM jobs"
-		rows, err := db.Query(query)
+		query = "SELECT * FROM jobs WHERE 1=1" // Base query
+
+		// Add filters to the query
+		if jobType != "" {
+			query += " AND job_type = ?"
+			args = append(args, jobType)
+		}
+		if jobCategory != "" {
+			query += " AND job_category = ?"
+			args = append(args, jobCategory)
+		}
+		if minSalary != "" {
+			query += " AND min_salary >= ?"
+			args = append(args, minSalary)
+		}
+		if maxSalary != "" {
+			query += " AND max_salary <= ?"
+			args = append(args, maxSalary)
+		}
+		if minExperience != "" {
+			query += " AND min_experience >= ?"
+			args = append(args, minExperience)
+		}
+		if maxExperience != "" {
+			query += " AND max_experience <= ?"
+			args = append(args, maxExperience)
+		}
+		if location != "" {
+			query += " AND location = ?"
+			args = append(args, location)
+		}
+		if approvedFilter != "" {
+			query += " AND approved = ?"
+			if approvedFilter == "true" {
+				args = append(args, true)
+			} else {
+				args = append(args, false)
+			}
+		}
+		if createdAfter != "" {
+			query += " AND created_at >= ?"
+			args = append(args, createdAfter)
+		}
+		if createdBefore != "" {
+			query += " AND created_at <= ?"
+			args = append(args, createdBefore)
+		}
+
+		// Execute the query
+		rows, err := db.Query(query, args...)
 		if err != nil {
 			log.Printf("Query execution error: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Query execution error"})
@@ -485,6 +665,7 @@ func JobsViews(c *gin.Context) {
 		})
 
 	} else {
+		// If a specific job ID is provided, retrieve the job by ID
 		query := "SELECT * FROM jobs WHERE job_id = ?"
 		row := db.QueryRow(query, jobID)
 
