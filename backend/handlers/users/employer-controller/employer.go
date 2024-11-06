@@ -31,7 +31,7 @@ import (
 // TODO: Search/filter applicants ✅
 // ค้นหาและกรองข้อมูลผู้สมัครงานตามเงื่อนไข เช่น ทักษะหรือประสบการณ์
 
-// TODO: Save applicant profiles ❌
+// TODO: Save applicant profiles ✅
 // บันทึกโปรไฟล์ผู้สมัครที่สนใจไว้เพื่อพิจารณาภายหลัง
 
 // AuthMiddleware checks for employer role in the JWT and retrieves employer_id
@@ -201,8 +201,8 @@ func JobCreate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Job created successfully"})
 }
 
-// JobsUpdate handles job update requests
-func JobsUpdate(c *gin.Context) {
+// JobUpdate handles job update requests
+func JobUpdate(c *gin.Context) {
 	jobID := c.Param("job-id") // Get job ID from the URL parameters
 
 	var jobRequest struct {
@@ -392,8 +392,8 @@ func JobsUpdate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Job updated successfully"})
 }
 
-// JobsDelete handles the deletion of a job by ID
-func JobsDelete(c *gin.Context) {
+// JobDelete handles the deletion of a job by ID
+func JobDelete(c *gin.Context) {
 	jobID := c.Param("job-id")
 
 	// Log the incoming delete request
@@ -513,7 +513,7 @@ func JobsDelete(c *gin.Context) {
 }
 
 // JobsViews retrieves all jobs or a specific job by ID from the database and returns them as JSON
-func JobsViews(c *gin.Context) {
+func JobViews(c *gin.Context) {
 	jobID := c.Param("job-id")
 
 	// Log the request
@@ -751,6 +751,7 @@ func ApplicationViews(c *gin.Context) {
 		JobID              int    `json:"job_id"`
 		FreshGradProfileID int    `json:"fresh_grad_profile_id"`
 		FreshGradResume    string `json:"resume_file_link"`
+		Favorited          bool   `json:"favorited"`
 	}
 
 	// Retrieve employer_id from the context
@@ -794,7 +795,7 @@ func ApplicationViews(c *gin.Context) {
 		log.Printf("Fetching all applications for jobID: %s", jobID)
 
 		query := `
-									SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
+									SELECT a.application_id, a.job_id, a.freshgradprofile_id, a.favorited, f.resume_file_link
 									FROM applications a 
 									INNER JOIN jobs j ON a.job_id = j.job_id 
 									INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
@@ -813,7 +814,7 @@ func ApplicationViews(c *gin.Context) {
 
 		for rows.Next() {
 			var application Application
-			if err := rows.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.FreshGradResume); err != nil {
+			if err := rows.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.Favorited, &application.FreshGradResume); err != nil {
 				log.Printf("Row scan error: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Row scan error"})
 				return
@@ -838,7 +839,7 @@ func ApplicationViews(c *gin.Context) {
 		log.Printf("Fetching application with applicationID: %s", applicationID)
 
 		query := `
-									SELECT a.application_id, a.job_id, a.freshgradprofile_id, f.resume_file_link
+									SELECT a.application_id, a.job_id, a.freshgradprofile_id, a.favorited, f.resume_file_link
 									FROM applications a 
 									INNER JOIN jobs j ON a.job_id = j.job_id 
 									INNER JOIN freshgradprofiles f ON a.freshgradprofile_id = f.freshgradprofile_id
@@ -848,7 +849,7 @@ func ApplicationViews(c *gin.Context) {
 		row := db.QueryRow(query, applicationID, employerID, jobID)
 
 		var application Application
-		if err := row.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.FreshGradResume); err != nil {
+		if err := row.Scan(&application.ApplicationID, &application.JobID, &application.FreshGradProfileID, &application.Favorited, &application.FreshGradResume); err != nil {
 			if err == sql.ErrNoRows {
 				log.Printf("Application not found for applicationID: %s", applicationID)
 				c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Application not found"})
@@ -864,4 +865,61 @@ func ApplicationViews(c *gin.Context) {
 			"data":   application,
 		})
 	}
+}
+
+func FavoritedController(c *gin.Context) {
+	// Retrieve parameters from URL path
+	applicationID := c.Param("application-id")
+	jobID := c.Param("job-id")
+
+	// Log the request details
+	log.Printf("FavoritedController invoked - applicationID: %s, jobID: %s", applicationID, jobID)
+
+	// Connect to the centralized database
+	db, err := services.ConnectDB()
+	if err != nil {
+		log.Printf("Error connecting to the database: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Unable to connect to the database. Please try again later.",
+		})
+		return
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database connection: %v", err)
+		}
+	}()
+
+	// Check if the application is currently favorited
+	var isFavorited bool
+	favoritedQuery := "SELECT favorited FROM applications WHERE application_id = ?"
+	if err := db.QueryRow(favoritedQuery, applicationID).Scan(&isFavorited); err != nil {
+		log.Printf("Error fetching favorited status for application %s: %v", applicationID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Unable to retrieve application favorited status.",
+		})
+		return
+	}
+
+	// Toggle the favorited status
+	updateQuery := "UPDATE applications SET favorited = ? WHERE application_id = ?"
+	_, err = db.Exec(updateQuery, !isFavorited, applicationID)
+	if err != nil {
+		log.Printf("Error updating favorited status for application %s: %v", applicationID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"message": "Unable to update application favorited status.",
+		})
+		return
+	}
+
+	// Log success and respond with success message
+	log.Printf("Successfully toggled favorited status for application %s to %v", applicationID, !isFavorited)
+	c.JSON(http.StatusOK, gin.H{
+		"status":    "success",
+		"message":   "Application favorited status updated successfully.",
+		"favorited": !isFavorited,
+	})
 }

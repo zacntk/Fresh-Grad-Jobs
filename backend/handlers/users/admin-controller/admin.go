@@ -269,6 +269,7 @@ func UserDelete(c *gin.Context) {
 	})
 }
 
+// UserViews retrieves all jobs or a specific user by ID from the database and returns them as JSON
 func UserViews(c *gin.Context) {
 	// Get role and user-id from query parameters
 	role := c.Query("role")      // Role is now retrieved as a query parameter
@@ -416,7 +417,7 @@ func UserViews(c *gin.Context) {
 }
 
 // JobsApprove handles the approval of a job by ID
-func JobsApprove(c *gin.Context) {
+func JobApprove(c *gin.Context) {
 	jobID := c.Param("job-id")
 	log.Printf("Attempting to approve job with ID: %s", jobID)
 
@@ -476,7 +477,7 @@ func JobsApprove(c *gin.Context) {
 }
 
 // JobsDelete handles the deletion of a job by ID
-func JobsDelete(c *gin.Context) {
+func JobDelete(c *gin.Context) {
 	jobID := c.Param("job-id")
 	log.Printf("Attempting to delete job with ID: %s", jobID)
 
@@ -533,7 +534,7 @@ func JobsDelete(c *gin.Context) {
 }
 
 // JobsViews retrieves all jobs or a specific job by ID from the database and returns them as JSON
-func JobsViews(c *gin.Context) {
+func JobViews(c *gin.Context) {
 	jobID := c.Param("job-id")
 	log.Printf("Retrieving jobs. JobID: %s", jobID)
 
